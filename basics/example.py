@@ -1,3 +1,4 @@
+import regex as re
 
 def unicode_encodings():
     test_string = 'hello! こんにちは!'
@@ -9,6 +10,10 @@ def unicode_encodings():
     assert len(utf8_encoded) == 23
     assert utf8_encoded.decode('utf-8') == 'hello! こんにちは!'
 
-unicode_encodings()
+def BPE_tokenizer_training():
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    assert re.findall(PAT, "some text that i'll pre-tokenize") == ['some', ' text', ' that', ' i', "'ll", ' pre', '-', 'tokenize']
 
+unicode_encodings()
+BPE_tokenizer_training()
 
