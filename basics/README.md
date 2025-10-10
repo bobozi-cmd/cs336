@@ -16,7 +16,9 @@
 - word-level 的 tokenizer 会遇到 out-of-vocabulary 的情况 (遇到训练时没遇过的 token), 而 character-level/byte-level 会导致输入的文本被编码成很长的序列, 会带来更多的计算和数据的更长期的依赖. 一种中间选择是 subword tokernizer, 用更大的 vocabulary size 换取更好的压缩, 比如 b'the' 出现的频率很高, 就为 b'the' 分配新的 vocab-id 来单独代表这个token. BPE encoding 就是一种选择 subword 的算法.
 - BPE Tokenizer 的训练包括三个步骤:
     - **Vocabulary initialization**: 建立256个bytes和vocab-id的映射
-    - **Pre-tokenization**: 遍历一遍训练语料来对相邻bytes做合并以及统计频次开销太大, 并且会将语义相近的token切分成无关的token(如 "dog." 和 "dog!"). 可以通过预先粗分一遍词(如 `line.split(" ")` 按 word 粗分), 然后再在这些词内部做合并, 节省算力又避免标点把近义词拆散. 
+    - **Pre-tokenization**: 遍历一遍训练语料来对相邻bytes做合并以及统计频次开销太大, 并且会将语义相近的token切分成无关的token(如 "dog." 和 "dog!"). 可以通过预先粗分一遍词(如 `line.split(" ")` 按 word 粗分), 然后再在这些词内部做合并, 节省算力又避免标点把近义词拆散. 文档里面给出一个更好的切分规则: `PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""`
+    - **Compute BPE merges**: 反复找到频次最大的bytes-pair (A, B), 将他们合成新的 token AB 加入vocabulary; 不跨 pre-token 的边界进行合并; 频次相同时按选字典序最大的那对.
+    - **Special tokens**: 有些特殊的字符串是用来表示元数据的, 比如 `<|endoftext|>`, 这些字符串应该只能用一个token来映射, 以此来标明什么时候结束生成(`<|endoftext|>`), 这些token的vocab-id应该是一个固定的值.
 
 
 ### Problem

@@ -1,3 +1,4 @@
+from collections import defaultdict
 import regex as re
 
 def unicode_encodings():
@@ -13,6 +14,85 @@ def unicode_encodings():
 def BPE_tokenizer_training():
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
     assert re.findall(PAT, "some text that i'll pre-tokenize") == ['some', ' text', ' that', ' i', "'ll", ' pre', '-', 'tokenize']
+    assert max([('A', 'B'), ('A', 'C'), ('B', "ZZ"), ('BA', 'A')]) == ('BA', 'A')
+
+    corpus = """
+    low low low low low
+    lower lower widest widest widest
+    newest newest newest newest newest newest
+    """
+
+    print(f"{'>'*30} Vocabulary-Init {'<'*30}")
+    vocabulary = [chr(i) for i in range(256)]
+    vocabulary.insert(0, '<|endoftext|>')
+    print(vocabulary[: 10], "...")
+
+    print(f"{'>'*30} Pre-tokenization {'<'*30}")
+    def split_str2bytes(s: str) -> str:
+        tokens = [c for c in s]
+        return ','.join(tokens)
+
+    freq_tb = defaultdict(lambda : 0)
+    for line in corpus.splitlines():
+        for word in line.strip().split():
+            freq_tb[split_str2bytes(word)] += 1
+    print(freq_tb.items())
+
+    
+    def merge(freq_tb: dict):
+        nonlocal vocabulary
+        freq_pair_tb = defaultdict(lambda : 0)
+        for k, v in freq_tb.items():
+            bytes_ = k.split(",")
+            for i in range(len(bytes_) - 1):
+                freq_pair_tb[bytes_[i] + bytes_[i + 1]] += v
+        print(freq_pair_tb.items())
+        first = sorted(freq_pair_tb.items(), key=lambda pair: (pair[1], pair[0]), reverse=True)[0]
+        print(f"Merge {first}")
+        vocabulary.append(first[0])
+        ret = defaultdict(lambda : 0)
+        for k, v in freq_tb.items():
+            bytes_ = k.split(",")
+            new_word = ""
+            for i in range(len(bytes_) - 1):
+                if bytes_[i] + bytes_[i + 1] == first[0]:
+                    if i > 0:
+                        new_word += ",".join(bytes_[:i])
+                        new_word += ","
+                    new_word += first[0]
+                    if i + 2 < len(bytes_):
+                        new_word += ","
+                        new_word += ",".join(bytes_[i+2:])
+                    break
+            if new_word == "":
+                ret[k] = v
+            else:
+                ret[new_word] = v
+            
+        return ret
+
+    for i in range(6):
+        print(f"{'>'*30} Merge-{i} {'<'*30}")
+        freq_tb = merge(freq_tb)
+        print("After merge:", freq_tb.items())
+    
+    print(vocabulary[: 5], "...", vocabulary[len(vocabulary) - 10:])
+
+    def tokenize(word: str) -> list:
+        nonlocal vocabulary
+        st = 0
+        tokens = []
+        while st < len(word):
+            for et in range(len(word))[::-1]:
+                # print(word[st:et+1])
+                if word[st:et+1] in vocabulary:
+                    tokens.append(word[st:et+1])
+                    st = et + 1
+                    break
+
+        return tokens
+
+    print(f"least -> {tokenize('least')}")
 
 unicode_encodings()
 BPE_tokenizer_training()
