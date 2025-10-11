@@ -19,6 +19,12 @@
     - **Pre-tokenization**: 遍历一遍训练语料来对相邻bytes做合并以及统计频次开销太大, 并且会将语义相近的token切分成无关的token(如 "dog." 和 "dog!"). 可以通过预先粗分一遍词(如 `line.split(" ")` 按 word 粗分), 然后再在这些词内部做合并, 节省算力又避免标点把近义词拆散. 文档里面给出一个更好的切分规则: `PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""`
     - **Compute BPE merges**: 反复找到频次最大的bytes-pair (A, B), 将他们合成新的 token AB 加入vocabulary; 不跨 pre-token 的边界进行合并; 频次相同时按选字典序最大的那对.
     - **Special tokens**: 有些特殊的字符串是用来表示元数据的, 比如 `<|endoftext|>`, 这些字符串应该只能用一个token来映射, 以此来标明什么时候结束生成(`<|endoftext|>`), 这些token的vocab-id应该是一个固定的值.
+- 利用 TinyStories 数据集训练BPE Tokenizer:
+    - **Parallelizing pre-tokenization**: 通过并行化对每个chunk做pre-tokenization, 加速处理速度, 每个chunk通过 special token进行分割, 利用lab提供的脚本`pretokenization_example.py`来处理. 处理后的chunks大致如: `[chunk1] abc..., [chunk2] <|endoftext|> cde..., [chunk2] <|endoftext|> fgh..., ...`
+    - **Removing special tokens before pre-tokenization**: 由于一个chunk会包含多个docs，需要对每个chunk再通过 special token 进行切分.
+        - 为什么用 `re.split` 不用 `str.split`: `str.split` 只支持单个special token, `re.split` 可以通过正则pattern支持多special token的切分
+        - 为什么要用`re.escape(special_token)`: 因为special_token里面包括 `｜`, 如果直接使用，会被当成或的逻辑进行正则匹配
+    - **Optimizing the merging step**: 之前每次合并, 都要遍历一遍所有pair计数, 但是其实只有合并的pair会产生新的pair需要计数, 没合并的pair不需要再算一次, 因此可以同增量更新计数来优化性能
 
 
 ### Problem
