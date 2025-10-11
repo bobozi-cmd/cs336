@@ -53,29 +53,30 @@ def find_chunk_boundaries(
 
 
 ## Usage
-import argparse
-from pathlib import Path
-import re
+if __name__ == "__main__":
+    import argparse
+    from pathlib import Path
+    import re
 
-parser = argparse.ArgumentParser()
-parser.add_argument("-f", "--file", type=Path, required=True)
-parser.add_argument("-n", "--n_chunks", type=int, default=4)
-args = parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--file", type=Path, required=True)
+    parser.add_argument("-n", "--n_chunks", type=int, default=4)
+    args = parser.parse_args()
 
-special_tokens = ['<|endoftext|>']
-pattern = "|".join([re.escape(token) for token in special_tokens])
+    special_tokens = ['<|endoftext|>']
+    pattern = "|".join([re.escape(token) for token in special_tokens])
 
-with open(args.file, "rb") as f:
-    num_processes = max(1, args.n_chunks)
-    boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+    with open(args.file, "rb") as f:
+        num_processes = max(1, args.n_chunks)
+        boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
 
-    # The following is a serial implementation, but you can parallelize this
-    # by sending each start/end pair to a set of processes.
-    for start, end in zip(boundaries[:-1], boundaries[1:]):
-        f.seek(start)
-        chunk = f.read(end - start).decode("utf-8", errors="ignore")
-        # Run pre-tokenization on your chunk and store the counts for each pre-token
-        print(f"[{start}: {end}), size={len(chunk)}: {repr(chunk[:50])}...")
-        docs = re.split(pattern, chunk)
-        for i, doc in enumerate(docs):
-            print(f"[{i}] {repr(doc[:100])} ...")
+        # The following is a serial implementation, but you can parallelize this
+        # by sending each start/end pair to a set of processes.
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            f.seek(start)
+            chunk = f.read(end - start).decode("utf-8", errors="ignore")
+            # Run pre-tokenization on your chunk and store the counts for each pre-token
+            print(f"[{start}: {end}), size={len(chunk)}: {repr(chunk[:50])}...")
+            docs = re.split(pattern, chunk)
+            for i, doc in enumerate(docs):
+                print(f"[{i}] {repr(doc[:100])} ...")
