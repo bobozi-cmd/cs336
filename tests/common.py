@@ -6,6 +6,8 @@ from functools import lru_cache
 FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "fixtures"
 
 
+# 将256个可能的字节值（0-255）映射到可打印的Unicode字符，便于文本处理和可视化
+# Unicode字符集 低位多是不可打印的控制字符，偏移256后会变成可打印的拉丁文扩展字符
 @lru_cache
 def gpt2_bytes_to_unicode() -> dict[int, str]:
     """
@@ -36,6 +38,7 @@ def gpt2_bytes_to_unicode() -> dict[int, str]:
     """
     # These 188 integers can used as-is, since they are not whitespace or control characters.
     # See https://www.ssec.wisc.edu/~tomw/java/unicode.html.
+    # 收集可直接表示的字符
     bs = list(range(ord("!"), ord("~") + 1)) + list(range(ord("¡"), ord("¬") + 1)) + list(range(ord("®"), ord("ÿ") + 1))
     cs = bs[:]
     # now get the representations of the other 68 integers that do need shifting
@@ -46,9 +49,14 @@ def gpt2_bytes_to_unicode() -> dict[int, str]:
         if b not in bs:
             # If this integer isn't in our list of visually-representable
             # charcters, then map it to the next nice character (offset by 256)
+            # 处理需要转换的字符，将其偏移256个位置，使其可以被Unicode所打印
             bs.append(b)
             cs.append(2**8 + n)
             n += 1
     characters = [chr(n) for n in cs]
-    d = dict(zip(bs, characters))
+    d = dict(zip(bs, characters)) # 原始字节 -> 对应的Unicode字符
     return d
+
+if __name__ == "__main__":
+   for idx, c in gpt2_bytes_to_unicode().items():
+       print(idx, c)
