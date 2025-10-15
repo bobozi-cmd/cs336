@@ -48,4 +48,11 @@
 
     (c) 变种的Unicode中使用双字节的 `0xc0 0x80` 表示空字符, 在标准unicode中是非法的
 
+- train_bpe:
+    - 和下面的tokenizer实验可以放在一起实现, 为了节约时间, 参考了 https://zhuanlan.zhihu.com/p/1926723111111340178 的实现, 测试脚步顺序应该先测 test_train_bpe, 再测 test_train_bpe_speed, 先把功能正确实现了, 再考虑速度的问题.
+    - bpe的基本逻辑就是参考讲义里面的实现, 但是需要做一些修改, 为了直观的对比自己写的代码的结果和测试的结果, 可以参考 tests/common, 实现 gpt2—str 和 unicode-bytes 互转的帮助函数, 然后把结果保存下来和答案做对比
+    - 为了把功能实现正确, 需要注意的点:
+        - 功能测试的测试集没有出现 special_token
+        - 需要增加pre-tokenize的逻辑来划分groups, 然后再遍历每个groups来统计频次
+        - 讲义里面求最大频次的pair没有考虑相同频次的情况, 需要增加相同频次按照字典序大小排序的逻辑(注意: 不是按照token-id排序)
 

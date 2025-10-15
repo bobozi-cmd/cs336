@@ -57,6 +57,22 @@ def gpt2_bytes_to_unicode() -> dict[int, str]:
     d = dict(zip(bs, characters)) # 原始字节 -> 对应的Unicode字符
     return d
 
+
+def gpt2_str_to_unicode_repr(converter, inp: str) -> bytes:
+    rconverter = {v: k for k, v in converter.items()}
+    return bytes([rconverter[c] for c in inp])
+
+
+def unicode_str_to_gpt2_str(converter, inp: bytes) -> bytes:
+    return ''.join([converter[bi] for bi in inp])
+
+
 if __name__ == "__main__":
-   for idx, c in gpt2_bytes_to_unicode().items():
-       print(idx, c)
+    converter = gpt2_bytes_to_unicode()
+    for idx, c in converter.items():
+        if idx != ord(c):
+            print(repr(chr(idx)), c)
+
+    print(unicode_str_to_gpt2_str(converter, b'\x00a\x01'))
+    print(repr(gpt2_str_to_unicode_repr(converter, 'Āaā')))
+    

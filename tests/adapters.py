@@ -590,5 +590,6 @@ def run_train_bpe(
                 Merges are ordered by order of creation.
     """
     # raise NotImplementedError
-    from ..basics.problem import train_bpe
-    return {}, []
+    from ..basics.tokenizer import BPETokenizer
+    tokenizer = BPETokenizer(vocab_size, special_tokens)
+    return tokenizer.train_slow(input_path)
