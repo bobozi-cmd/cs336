@@ -1,11 +1,12 @@
 import argparse
 from collections import defaultdict
 from pathlib import Path
+from typing import BinaryIO
 import regex as re
 import warnings
 import json
 import os
-from multiprocessing import Pool
+import multiprocessing
 import heapq
 
 debug_mode = os.environ.get('DEBUG', False)
@@ -86,6 +87,57 @@ def detokenize(vocab: dict[int, bytes], tokens: list[int]):
     return ret
 
 
+
+def find_chunk_boundaries(
+    file: BinaryIO,
+    desired_num_chunks: int,
+    split_special_token: bytes,
+) -> list[int]:
+    """
+    Chunk the file into parts that can be counted independently.
+    May return fewer chunks if the boundaries end up overlapping.
+    """
+    assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
+
+    # Get total file size in bytes
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    chunk_size = file_size // desired_num_chunks
+
+    # 1. 均分当前文件成多个chunk
+    # Initial guesses for chunk boundary locations, uniformly spaced
+    # Chunks start on previous index, don't include last index
+    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size
+
+    mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+    for bi in range(1, len(chunk_boundaries) - 1):
+        initial_position = chunk_boundaries[bi]
+        file.seek(initial_position)  # Start at boundary guess
+        while True:
+            mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+
+            # If EOF, this boundary should be at the end of the file
+            if mini_chunk == b"":
+                chunk_boundaries[bi] = file_size
+                break
+
+            # 2. 找到当前chunk下面最近的一个special token，重新设置边界
+            # Find the special token in the mini chunk
+            found_at = mini_chunk.find(split_special_token)
+            if found_at != -1:
+                chunk_boundaries[bi] = initial_position + found_at
+                break
+            initial_position += mini_chunk_size
+
+    # 3. 可能出现两个chunk下面最近的一个special token是同一个，所以要去重
+    # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+    return sorted(set(chunk_boundaries))
+
+
 def merge(token_group: list[list[int]], pair: tuple[int, int], new_index: int) -> list[list[int]]:
     new_group = []
     for indices in token_group:
@@ -146,24 +198,25 @@ class BPETokenizer():
         # # (p1, p2) -> new_token_id
         # self.pair2new = {(p1, p2): self.stoi[p1 + p2] for (p1, p2) in self.merges}
 
-    def _pretokenize_chunk(self, chunk_text: str):
+    @staticmethod
+    def _pretokenize_chunk(args):
+        chunk_text, special_tokens, itos = args
         # 1. find_chunk_boundaries() -> list[chunk_text]
         # 2. pretokenize_chunk() -> list[list[int]]
         # 3. reduce -> list[list[int]]
         blocks = [] # 每个 special token 分割出一个block，多个block组成一个chunk
-        if len(self.special_tokens) > 0:
-            pattern = "|".join([re.escape(token) for token in self.special_tokens])
+        if len(special_tokens) > 0:
+            pattern = "|".join([re.escape(token) for token in special_tokens])
             blocks = re.split(pattern, chunk_text)
         else:
             blocks = [chunk_text]
 
         # {b'<|endoftext|>': 0, b'\x00': 1, ... }
-        inital_vocab_rmap = {v : k for k, v in self.itos.items()}
+        inital_vocab_rmap = {v : k for k, v in itos.items()}
         # 对每个block进行pre-tokenize, 产生出的每个token, 存下其bytes list
         token_group: list[list[int]] = []
         for block in blocks:
-            if block in self.special_tokens or not block:
-                print(block)
+            if block in special_tokens or not block:
                 continue
 
             for token_byte in pre_tokenize(block):
@@ -182,8 +235,9 @@ class BPETokenizer():
             text = fp.read()
 
         token_group: list[list[int]] = []
-        token_group.extend(self._pretokenize_chunk(text))
+        token_group.extend(self._pretokenize_chunk((text, self.special_tokens, self.itos)))
         # print(f"PreTokenize: {token_group[:5]} ...")
+        return {}, []
 
         n_merges = self.vocab_size - len(self.itos)
         for i in range(n_merges):
@@ -248,11 +302,26 @@ class BPETokenizer():
 
         return new_group
 
-    def train_fast(self, file_path: Path):
-        with open(file_path, "r", encoding="utf-8") as fp:
-            text = fp.read()
+    def train_fast(self, file_path: Path, n_chunks: int = 4):
+        # with open(file_path, "r", encoding="utf-8") as fp:
+        #     text = fp.read()
         token_group: list[list[int]] = []
-        token_group.extend(self._pretokenize_chunk(text))
+
+        chunks = []
+        with open(file_path, 'rb') as f:
+            num_processes = max(1, n_chunks)
+            boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
+                f.seek(start)
+                chunks.append(f.read(end - start).decode("utf-8", errors="ignore"))
+        
+        with multiprocessing.Pool(processes=len(chunks)) as pool:
+            result = pool.map(BPETokenizer._pretokenize_chunk, iterable=[(chunk, self.special_tokens, self.itos) for chunk in chunks])
+
+        for res in result:
+            token_group.extend(res)
+        return {}, []
 
         n_merges = self.vocab_size - len(self.itos)
         # 大根堆，维护频次最高的pair
@@ -311,7 +380,6 @@ if __name__ == "__main__":
     #     print(top)
 
 
-    # rvocab = {v : k for k, v in vocab.items()}
     converter = GPT2Converter()
 
     # for idx, bs in vocab.items():
@@ -321,14 +389,14 @@ if __name__ == "__main__":
     #         print(idx, repr(bs), t1.special_tokens[idx])
 
 
-    with open("test_vocab.json", "w") as f:
-        reference_vocab = {(converter.from_unicode(bs) if bs not in t1.special_tokens_bytes else t1.special_tokens[idx]) : idx for idx, bs in vocab.items()}
-        json.dump(reference_vocab, f, ensure_ascii=False)
+    # with open("test_vocab.json", "w") as f:
+    #     reference_vocab = {(converter.from_unicode(bs) if bs not in t1.special_tokens_bytes else t1.special_tokens[idx]) : idx for idx, bs in vocab.items()}
+    #     json.dump(reference_vocab, f, ensure_ascii=False)
 
-    with open("test_merges.txt", "w") as f:
-        for (b1, b2) in merges:
-            if debug_mode:
-                print(list(b1), list(b2), converter.from_unicode(b1), converter.from_unicode(b2), file=f)
-            else:
-                print(converter.from_unicode(b1), converter.from_unicode(b2), file=f)
+    # with open("test_merges.txt", "w") as f:
+    #     for (b1, b2) in merges:
+    #         if debug_mode:
+    #             print(list(b1), list(b2), converter.from_unicode(b1), converter.from_unicode(b2), file=f)
+    #         else:
+    #             print(converter.from_unicode(b1), converter.from_unicode(b2), file=f)
 
