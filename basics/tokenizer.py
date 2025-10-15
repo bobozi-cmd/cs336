@@ -5,6 +5,8 @@ import regex as re
 import warnings
 import json
 import os
+from multiprocessing import Pool
+import heapq
 
 debug_mode = os.environ.get('DEBUG', False)
 
@@ -100,6 +102,24 @@ def merge(token_group: list[list[int]], pair: tuple[int, int], new_index: int) -
     return new_group
 
 
+class PairItem():
+    def __init__(self, pair: tuple[int, int], pair_bytes: tuple[bytes, bytes], count: int):
+        self.pair = pair
+        self.pair_bytes = pair_bytes
+        self.count = count
+
+    def __gt__(self, other: "PairItem"): # reversed for heapq
+        if self.count == other.count:
+            return self.pair_bytes < other.pair_bytes
+        return self.count < other.count
+    
+    def __eq__(self, other: "PairItem"):
+        return self.pair == other.pair and self.count == self.count
+    
+    def __repr__(self):
+        return f"Pair<{self.pair}, {self.pair_bytes}, {self.count}>"
+
+
 class BPETokenizer():
     def __init__(self, vocab_size: int, special_tokens: list[str]):
         self.vocab_size = vocab_size
@@ -126,16 +146,16 @@ class BPETokenizer():
         # # (p1, p2) -> new_token_id
         # self.pair2new = {(p1, p2): self.stoi[p1 + p2] for (p1, p2) in self.merges}
 
-    def train_slow(self, file_path: Path):
-        with open(file_path, "r", encoding="utf-8") as fp:
-            text = fp.read()
-
+    def _pretokenize_chunk(self, chunk_text: str):
+        # 1. find_chunk_boundaries() -> list[chunk_text]
+        # 2. pretokenize_chunk() -> list[list[int]]
+        # 3. reduce -> list[list[int]]
         blocks = [] # 每个 special token 分割出一个block，多个block组成一个chunk
         if len(self.special_tokens) > 0:
             pattern = "|".join([re.escape(token) for token in self.special_tokens])
-            blocks = re.split(pattern, text)
+            blocks = re.split(pattern, chunk_text)
         else:
-            blocks = [text]
+            blocks = [chunk_text]
 
         # {b'<|endoftext|>': 0, b'\x00': 1, ... }
         inital_vocab_rmap = {v : k for k, v in self.itos.items()}
@@ -148,15 +168,26 @@ class BPETokenizer():
 
             for token_byte in pre_tokenize(block):
                 token_group.append([inital_vocab_rmap[bytes([b])] for b in token_byte])
-            
+        return token_group
+
+    def _collect_freqs(self, token_group: list[list[int]]):
+        counts: dict[tuple[int, int], int] = defaultdict(int)
+        for token_indices in token_group:
+            for index1, index2 in zip(token_indices[:], token_indices[1:]):
+                counts[(index1, index2)] += 1
+        return counts
+
+    def train_slow(self, file_path: Path):
+        with open(file_path, "r", encoding="utf-8") as fp:
+            text = fp.read()
+
+        token_group: list[list[int]] = []
+        token_group.extend(self._pretokenize_chunk(text))
         # print(f"PreTokenize: {token_group[:5]} ...")
 
         n_merges = self.vocab_size - len(self.itos)
         for i in range(n_merges):
-            counts: dict[tuple[int, int], int] = defaultdict(int)
-            for token_indices in token_group:
-                for index1, index2 in zip(token_indices[:], token_indices[1:]):
-                    counts[(index1, index2)] += 1
+            counts: dict[tuple[int, int], int] = self._collect_freqs(token_group)
             
             if len(counts) == 0:
                 warnings.warn("Found empty counts")
@@ -183,8 +214,81 @@ class BPETokenizer():
             # print(f"PreTokenize: {token_group[:5]} ...")
         
         return self.itos, self.merges
+    
+    def _merge_and_update(self, heap: list[PairItem], token_group: list[list[int]], pair: tuple[int, int], new_index: int) -> list[list[int]]:
+        new_count: dict[tuple[int, int], int] = defaultdict(int)
+    
+        new_group = []
+        for indices in token_group:
+            i = 0
+            if pair[0] in indices and pair[1] in indices:
+                new_indices = []
+                while i < len(indices):
+                    if i + 1 < len(indices) and indices[i] == pair[0] and indices[i+1] == pair[1]:
+                        new_indices.append(new_index)
+                        if i > 0:
+                            new_count[(indices[i-1], new_index)] += 1
+                            self.pair_counts[(indices[i-1], indices[i])] -= 1
+                        if i + 2 < len(indices):
+                            new_count[(new_index, indices[i+2])] += 1
+                            self.pair_counts[(indices[i+1], indices[i+2])] -= 1
+                        i += 2
+                    else:
+                        new_indices.append(indices[i])
+                        i += 1
+                new_group.append(new_indices)
+            else:
+                new_group.append(indices)
 
+        for k, v in new_count.items():
+            if debug_mode:
+                print(f"Add {PairItem(k, (self.itos[k[0]], self.itos[k[1]]), v)}")
+            self.pair_counts[k] = v
+            heapq.heappush(heap, PairItem(k, (self.itos[k[0]], self.itos[k[1]]), v))
 
+        return new_group
+
+    def train_fast(self, file_path: Path):
+        with open(file_path, "r", encoding="utf-8") as fp:
+            text = fp.read()
+        token_group: list[list[int]] = []
+        token_group.extend(self._pretokenize_chunk(text))
+
+        n_merges = self.vocab_size - len(self.itos)
+        # 大根堆，维护频次最高的pair
+        # 可能的情况: (s, t) = 10, ('a', 's') = 10, pop + merge (s, t) 会导致 ('a', 's') 的频次失效(如, ['a', 's', 't'] -> ['a', 'st'])
+        # 为了解决这个问题, 需要额外维护一个pair_count, 每次merge的时候更新 (原始的pair--)
+        # 在取出top的时候, 和 pair_count 里面的值进行对比, 一致就使用, 不一致就更新之后重新插入heaq, 再次取top
+        heap: list[PairItem] = []
+        
+        self.pair_counts: dict[tuple[int, int], int] = self._collect_freqs(token_group)
+        for k, v in self.pair_counts.items():
+            heapq.heappush(heap, PairItem(k, (self.itos[k[0]], self.itos[k[1]]), v))
+        
+        # for i in range(n_merges):
+        while len(self.itos) < self.vocab_size:
+            pair = heapq.heappop(heap)
+            if self.pair_counts[pair.pair] != pair.count:
+                if debug_mode:
+                    print(f"Failed: {pair} -> {self.pair_counts[pair.pair]}")
+                heapq.heappush(heap, PairItem(pair.pair, pair.pair_bytes, self.pair_counts[pair.pair]))
+                continue
+            
+            if debug_mode:
+                print(f"Found {pair}")
+            index1, index2 = pair.pair
+
+            new_index = len(self.itos)
+            p1_bytes, p2_bytes = self.itos[index1], self.itos[index2]
+            new_token_bytes = p1_bytes + p2_bytes
+
+            self.merges.append((p1_bytes, p2_bytes))
+            self.stoi[new_token_bytes] = new_index
+            self.itos[new_index] = new_token_bytes
+
+            token_group = self._merge_and_update(heap, token_group, pair.pair, new_index)
+            
+        return self.itos, self.merges
 
 if __name__ == "__main__":
 
@@ -192,12 +296,22 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--file", type=Path, required=True)
     args = parser.parse_args()
 
-    assert pre_tokenize("some text that i'll pre-tokenize") == [b'some', b' text', b' that', b' i', b"'ll", b' pre', b'-', b'tokenize']
+    # assert pre_tokenize("some text that i'll pre-tokenize") == [b'some', b' text', b' that', b' i', b"'ll", b' pre', b'-', b'tokenize']
     
     t1 = BPETokenizer(500, ['<|endoftext|>'])
-    vocab, merges = t1.train_slow(args.file)
+    # vocab, merges = t1.train_slow(args.file)
+    vocab, merges = t1.train_fast(args.file)
 
-    rvocab = {v : k for k, v in vocab.items()}
+    # lis = [PairItem((0, 0), (b'\x00', b'\x00'), 10), PairItem((120, 0), (b'\x00\x01', b'\x00'), 9), PairItem((12, 0), (b'a\x01', b'\x00'), 10)]
+    # lis.sort()
+    # print(lis)
+    # heapq.heapify(lis)
+    # while len(lis) > 0:
+    #     top = heapq.heappop(lis)
+    #     print(top)
+
+
+    # rvocab = {v : k for k, v in vocab.items()}
     converter = GPT2Converter()
 
     # for idx, bs in vocab.items():

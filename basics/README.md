@@ -55,4 +55,10 @@
         - 功能测试的测试集没有出现 special_token
         - 需要增加pre-tokenize的逻辑来划分groups, 然后再遍历每个groups来统计频次
         - 讲义里面求最大频次的pair没有考虑相同频次的情况, 需要增加相同频次按照字典序大小排序的逻辑(注意: 不是按照token-id排序)
-
+        - 功能正确: test_train_bpe 和 test_train_bpe_special_tokens 都pass, test_train_bpe_special_tokens 大概要测十几分钟
+    - 接下来需要优化性能, 通过profile工具来检查性能瓶颈:
+        - python -m scalene ./basics/tokenizer.py -f ./tests/fixtures/corpus.en (scalene 不支持插桩)
+        - 收集完会生成一个分析页面, 可以看到开销最大的代码片段
+            ![prof1](prof1.png)
+        - 分析可知代码在每次合并之后, 要全量统计所有pair的频次, 开销很大, 冗余计算太多了, 有些无关的pair根本不需要更新, 通过维护一个大根堆, 来增量更新pair的频次, 额外维护一个实时的pair_count, 当从堆中取出的pair的计数和pair_count中的不一致时, 说明其失效了, 更新其频次重新插入堆中, 通过perf可见性能提升了10x, test_train_bpe_special_tokens 测了1分钟多
+        ![prof2](prof2.png)
