@@ -591,6 +591,9 @@ def run_train_bpe(
     """
     # raise NotImplementedError
     from ..basics.tokenizer import BPETokenizer
-    tokenizer = BPETokenizer(vocab_size, special_tokens)
+    # from ..basics.my_ans.tokenizer import BPETokenizer
+    # tokenizer = BPETokenizer(vocab_size, special_tokens)
     # return tokenizer.train_slow(input_path)
-    return tokenizer.train_fast(input_path)
+    # return tokenizer.train_fast(input_path)
+    tokenizer = BPETokenizer(input_path, vocab_size, special_tokens)
+    return tokenizer.train(1, 28000)
