@@ -63,5 +63,6 @@
         - 分析可知代码在每次合并之后, 要全量统计所有pair的频次, 开销很大, 冗余计算太多了, 有些无关的pair根本不需要更新, 通过维护一个大根堆, 来增量更新pair的频次, 额外维护一个实时的pair_count, 当从堆中取出的pair的计数和pair_count中的不一致时, 说明其失效了, 更新其频次重新插入堆中, 通过perf可见性能提升了10x, test_train_bpe_special_tokens 测了1分钟多
         ![prof2](prof2.png)
         - 进一步优化pretokenize的性能, 启动多个进程来做, vocab_size=500, 优化前 43.3 s, 用 4 个进程预处理没发现性能提升, 可能是数据量太小, 只测pre-tokenize, 用TinyStoriesV2-GPT4-train.txt, 测试平台换成linux, 内存占用过大, 会导致机器卡死, 参考别人的实现: [Code](https://www.heywhale.com/api/notebooks/689709e123583639fc675b6f/RenderedContent?cellcomment=1&cellbookmark=1#🚀-执行流程详解), 这里的实现我主要参考的是他用mmap做测试集分割和采样的优化, merge的思路还是扫一遍groups, 我没太弄明白他的merge思路, 按照他的思路, 为每个pair维护其索引, 每次只需要遍历这部分索引的左右对即可, 但是合并会导致索引发生改变, 导致之前其他pair的索引失效, 这里不知道他是怎么处理的, 我按照他的逻辑实现的, 通过不了测试. 此外, 他的sample的逻辑, 会修改原本的训练数据, strip() 会删除 \n, ' ' 等, 导致测试三过不了, 去掉strip() 就可以了, 优化完, test_train_bpe_special_tokens 的性能从 1 分钟多 降低到 1分钟之内.
+        - 设置采样参数 22000 个文本, vocab_size=10000, 在linux上大概要训练 26 min 
         
 

@@ -7,6 +7,7 @@ import mmap
 from pathlib import Path
 from pydoc import doc
 import random
+import time
 from turtle import position, st
 from typing import BinaryIO
 import regex as re
@@ -277,8 +278,7 @@ class BPETokenizer():
 
                     if len(documents) > n_sample:
                         print(f"Down scale from {len(documents)} to {n_sample}")
-                        # documents = random.sample(documents, n_sample)
-                        documents = documents[:n_sample]
+                        documents = random.sample(documents, n_sample)
                     
                 return delim.join(documents)
         except Exception as e:
@@ -305,32 +305,100 @@ class BPETokenizer():
         return token_group
 
 
+def save(vocab, merges, special_tokens):
+    converter = GPT2Converter()
+    special_tokens_bytes = [token.encode('utf-8') for token in special_tokens]
+    with open("test_vocab.json", "w") as f:
+        reference_vocab = {(converter.from_unicode(bs) if bs not in special_tokens_bytes else special_tokens[idx]) : idx for idx, bs in vocab.items()}
+        json.dump(reference_vocab, f, ensure_ascii=False)
+
+    with open("test_merges.txt", "w") as f:
+        for (b1, b2) in merges:
+            if debug_mode:
+                print(list(b1), list(b2), converter.from_unicode(b1), converter.from_unicode(b2), file=f)
+            else:
+                print(converter.from_unicode(b1), converter.from_unicode(b2), file=f)
+
+
+def evaluation(special_tokens):
+    vocab_size = 10000
+    n_proc = 8
+    sample_size = 22000
+
+    train_path = Path('/home/zwb/Jobs/cs336/data/TinyStoriesV2-GPT4-train.txt')
+    valid_path = Path('/home/zwb/Jobs/cs336/data/TinyStoriesV2-GPT4-valid.txt')
+
+    assert train_path.exists() and valid_path.exists()
+
+    print("🚀 开始训练")
+    start_time = time.time()
+    train_tokenizer = BPETokenizer(train_path, vocab_size, special_tokens)
+    train_vocab, train_merges = train_tokenizer.train(n_proc, sample_size)
+    print(f"\n✅ 训练完成! 耗时: {time.time() - start_time:.2f}秒")
+
+    # 小规模验证 (使用验证集的10%)
+    print("\n🔬 小规模验证")
+    valid_tokenizer = BPETokenizer(train_path, vocab_size, special_tokens)
+    valid_vocab, valid_merges = valid_tokenizer.train(n_proc, 2)
+
+    # 分析结果
+    print("\n📊 训练结果")
+    print(f"训练词汇表大小: {len(train_vocab):,}")
+    print(f"训练合并操作数: {len(train_merges):,}")
+    print(f"验证词汇表大小: {len(valid_vocab):,}")
+    print(f"验证合并操作数: {len(valid_merges):,}")
+
+    # 比较词汇表重叠率
+    train_tokens = set(train_vocab.values())
+    valid_tokens = set(valid_vocab.values())
+    overlap = train_tokens & valid_tokens
+    print(f"\n📈 词汇表重叠率: {len(overlap)/len(train_tokens):.1%}")
+
+    def evaluate_tokenizer(vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], test_text: str):
+        """简单评估分词器效果"""
+        print("\n🔍 分词器评估")
+        sample_text = test_text[:200] + "..." if len(test_text) > 200 else test_text
+        print(f"样例文本: {sample_text}")
+        
+        # 简单统计
+        unique_tokens = set(vocab.values())
+        print(f"词汇表大小: {len(vocab):,}")
+        print(f"唯一token数: {len(unique_tokens):,}")
+        print(f"合并操作数: {len(merges):,}")
+
+    # 加载验证集样例进行评估
+    with open(valid_path, "r", encoding="utf-8") as f:
+        valid_text = f.read(1000)  # 读取前1000字符用于评估
+    evaluate_tokenizer(train_vocab, train_merges, valid_text)
+
+    return train_vocab, train_merges
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-f", "--file", type=Path, required=True)
     parser.add_argument("--save", default=False, action="store_true")
+    parser.add_argument("--eval", default=False, action="store_true")
     args = parser.parse_args()
 
-    vocab_size = 1000
     special_tokens = ["<|endoftext|>"]
-    special_tokens_bytes = [token.encode('utf-8') for token in special_tokens]
-    n_proc = 2
-    sample_size = 28000
 
-    tokenizer = BPETokenizer(args.file, vocab_size, special_tokens)
-    vocab, merges = tokenizer.train(n_proc, sample_size)
+    if args.eval:
+        vocab, merges = evaluation(special_tokens)
+    else:
+        vocab_size = 500
+        n_proc = 8
+        sample_size = 22000
+
+        tokenizer = BPETokenizer(args.file, vocab_size, special_tokens)
+        vocab, merges = tokenizer.train(n_proc, sample_size)
 
     if args.save:
-        converter = GPT2Converter()
-        with open("test_vocab.json", "w") as f:
-            reference_vocab = {(converter.from_unicode(bs) if bs not in special_tokens_bytes else special_tokens[idx]) : idx for idx, bs in vocab.items()}
-            json.dump(reference_vocab, f, ensure_ascii=False)
+        save(vocab, merges, special_tokens)
 
-        with open("test_merges.txt", "w") as f:
-            for (b1, b2) in merges:
-                if debug_mode:
-                    print(list(b1), list(b2), converter.from_unicode(b1), converter.from_unicode(b2), file=f)
-                else:
-                    print(converter.from_unicode(b1), converter.from_unicode(b2), file=f)
+    import psutil
+    process = psutil.Process()
+    mem_usage = process.memory_info().rss / (1024 ** 3)  # GB
+    print(f"💾 峰值内存使用: {mem_usage:.2f} GB")
 
