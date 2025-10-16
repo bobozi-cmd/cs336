@@ -194,7 +194,7 @@ class BPEHeap():
     #         heapq.heappush(self.heap, PairItem(k, (self.vocab[k[0]], self.vocab[k[1]]), v))
 
 
-class BPETokenizer():
+class BPETokenizerTrainer():
     def __init__(self, input_file: Path, vocab_size: int, special_tokens: list[str]):
         self.input_file = input_file
         self.vocab_size = vocab_size
@@ -325,13 +325,13 @@ def evaluation(special_tokens):
 
     print("🚀 开始训练")
     start_time = time.time()
-    train_tokenizer = BPETokenizer(train_path, vocab_size, special_tokens)
+    train_tokenizer = BPETokenizerTrainer(train_path, vocab_size, special_tokens)
     train_vocab, train_merges = train_tokenizer.train(n_proc, sample_size)
     print(f"\n✅ 训练完成! 耗时: {time.time() - start_time:.2f}秒")
 
     # 小规模验证 (使用验证集的10%)
     print("\n🔬 小规模验证")
-    valid_tokenizer = BPETokenizer(train_path, vocab_size, special_tokens)
+    valid_tokenizer = BPETokenizerTrainer(train_path, vocab_size, special_tokens)
     valid_vocab, valid_merges = valid_tokenizer.train(n_proc, 2)
 
     # 分析结果
@@ -384,7 +384,7 @@ if __name__ == "__main__":
         n_proc = 8
         sample_size = 22000
 
-        tokenizer = BPETokenizer(args.file, vocab_size, special_tokens)
+        tokenizer = BPETokenizerTrainer(args.file, vocab_size, special_tokens)
         vocab, merges = tokenizer.train(n_proc, sample_size)
 
     if args.save:

@@ -94,6 +94,59 @@ def BPE_tokenizer_training():
 
     print(f"least -> {tokenize('least')}")
 
-unicode_encodings()
-BPE_tokenizer_training()
+def bpe_encoding():
+    corpus = "the cat ate"
+    vocab = {
+        0: b' ',
+        1: b'a',
+        2: b'c',
+        3: b'e',
+        4: b'h',
+        5: b't',
+        6: b'th',
+        7: b' c',
+        8: b' a',
+        9: b'the',
+        10: b' at'
+    }
+    merges = [(b't', b'h'), (b' ', b'c'), (b' ', b'a'), (b'th', b'e'), (b' a', b't')]
+
+    rvocab = { v:k for k, v in vocab.items()}
+    prefix_merges: dict[bytes, list[bytes]] = defaultdict(list)
+    for b1, b2 in merges:
+        prefix_merges[b1].append(b2)
+    
+    subwords = ["the", " cat", " ate"]
+    tokens_id = []
+    for subword in subwords:
+        token = [bytes([ei]) for ei in subword.encode('utf-8')]
+        while True:
+            found = False
+            for i in range(len(token) - 1):
+                if token[i] in prefix_merges and token[i+1] in prefix_merges[token[i]]:
+                    found = True
+                    token[i] = vocab[rvocab[token[i] + token[i+1]]]
+                    del token[i+1]
+                    break
+            if not found:
+                break
+        
+        token_id = []
+        for tok in token:
+            token_id.append(rvocab[tok])
+
+        print([bytes([ei]) for ei in subword.encode('utf-8')], '->', token, '->', token_id)
+        tokens_id.extend(token_id)
+
+    bytes_list = list(map(vocab.get, tokens_id))
+    string = b"".join(bytes_list).decode('utf-8')
+    print(string)
+
+        
+
+
+if __name__ == "__main__":
+    # unicode_encodings()
+    # BPE_tokenizer_training()
+    bpe_encoding()
 

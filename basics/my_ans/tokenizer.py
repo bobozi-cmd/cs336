@@ -172,7 +172,7 @@ class PairItem():
         return f"Pair<{self.pair}, {self.pair_bytes}, {self.count}>"
 
 
-class BPETokenizer():
+class BPETokenizerTrainer():
     def __init__(self, vocab_size: int, special_tokens: list[str]):
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens or []
@@ -317,7 +317,7 @@ class BPETokenizer():
                 chunks.append(f.read(end - start).decode("utf-8", errors="ignore"))
         
         with multiprocessing.Pool(processes=len(chunks)) as pool:
-            result = pool.map(BPETokenizer._pretokenize_chunk, iterable=[(chunk, self.special_tokens, self.itos) for chunk in chunks])
+            result = pool.map(BPETokenizerTrainer._pretokenize_chunk, iterable=[(chunk, self.special_tokens, self.itos) for chunk in chunks])
 
         for res in result:
             token_group.extend(res)
@@ -367,7 +367,7 @@ if __name__ == "__main__":
 
     # assert pre_tokenize("some text that i'll pre-tokenize") == [b'some', b' text', b' that', b' i', b"'ll", b' pre', b'-', b'tokenize']
     
-    t1 = BPETokenizer(500, ['<|endoftext|>'])
+    t1 = BPETokenizerTrainer(500, ['<|endoftext|>'])
     # vocab, merges = t1.train_slow(args.file)
     vocab, merges = t1.train_fast(args.file)
 

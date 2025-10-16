@@ -25,6 +25,13 @@
         - 为什么用 `re.split` 不用 `str.split`: `str.split` 只支持单个special token, `re.split` 可以通过正则pattern支持多special token的切分
         - 为什么要用`re.escape(special_token)`: 因为special_token里面包括 `｜`, 如果直接使用，会被当成或的逻辑进行正则匹配
     - **Optimizing the merging step**: 之前每次合并, 都要遍历一遍所有pair计数, 但是其实只有合并的pair会产生新的pair需要计数, 没合并的pair不需要再算一次, 因此可以同增量更新计数来优化性能
+- Encodeing 和 Decoding
+    - 编码: BPE 对文本进行编码的过程就是我们训练的过程
+        - **Pre-tokenization**
+        - **Apply the merges**: 对于每个分词, 将其的字节序列按照训练阶段学到的合并规则列表逐步合并, **必须严格按照训练时产生的顺序依次尝试**: 每次查找当前序列中是否存在可应用的合并对, 存在则合并, 重复这个过程直到不存在可合并对. (不同分词之间不能合并, 注意 Special tokens)
+        - **Map to token id**
+    - 解码: 将 token ID 序列还原为原始文本, 注意一些非法的id, 可以在解码的时候让decode的参数errors='replace', 会自动替换不合法的ids
+    
 
 
 ### Problem
@@ -63,6 +70,7 @@
         - 分析可知代码在每次合并之后, 要全量统计所有pair的频次, 开销很大, 冗余计算太多了, 有些无关的pair根本不需要更新, 通过维护一个大根堆, 来增量更新pair的频次, 额外维护一个实时的pair_count, 当从堆中取出的pair的计数和pair_count中的不一致时, 说明其失效了, 更新其频次重新插入堆中, 通过perf可见性能提升了10x, test_train_bpe_special_tokens 测了1分钟多
         ![prof2](prof2.png)
         - 进一步优化pretokenize的性能, 启动多个进程来做, vocab_size=500, 优化前 43.3 s, 用 4 个进程预处理没发现性能提升, 可能是数据量太小, 只测pre-tokenize, 用TinyStoriesV2-GPT4-train.txt, 测试平台换成linux, 内存占用过大, 会导致机器卡死, 参考别人的实现: [Code](https://www.heywhale.com/api/notebooks/689709e123583639fc675b6f/RenderedContent?cellcomment=1&cellbookmark=1#🚀-执行流程详解), 这里的实现我主要参考的是他用mmap做测试集分割和采样的优化, merge的思路还是扫一遍groups, 我没太弄明白他的merge思路, 按照他的思路, 为每个pair维护其索引, 每次只需要遍历这部分索引的左右对即可, 但是合并会导致索引发生改变, 导致之前其他pair的索引失效, 这里不知道他是怎么处理的, 我按照他的逻辑实现的, 通过不了测试. 此外, 他的sample的逻辑, 会修改原本的训练数据, strip() 会删除 \n, ' ' 等, 导致测试三过不了, 去掉strip() 就可以了, 优化完, test_train_bpe_special_tokens 的性能从 1 分钟多 降低到 1分钟之内.
-        - 设置采样参数 22000 个文本, vocab_size=10000, 在linux上大概要训练 26 min 
+        - 设置采样参数 22000 个文本, vocab_size=10000, 在linux上大概要训练 33 min 
+        ![train](train_tinystories.png)
         
 
