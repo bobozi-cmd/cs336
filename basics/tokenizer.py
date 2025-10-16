@@ -1,14 +1,9 @@
 import argparse
-from ast import List
-from audioop import mul
 from collections import defaultdict
-import enum
 import mmap
 from pathlib import Path
-from pydoc import doc
 import random
 import time
-from turtle import position, st
 from typing import BinaryIO
 import regex as re
 import warnings
@@ -17,8 +12,6 @@ import os
 import multiprocessing
 import heapq
 from tqdm import tqdm
-
-from basics.test_demo import init_worker
 
 debug_mode = os.environ.get('DEBUG', False)
 
