@@ -13,7 +13,7 @@ import multiprocessing
 import heapq
 from tqdm import tqdm
 
-debug_mode = os.environ.get('DEBUG', False)
+debug_mode = os.environ.get('DEBUG', 'False').lower() == 'true'
 
 
 class GPT2Converter:
@@ -371,12 +371,20 @@ class BPETokenizer():
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None) -> None:
         self.vocab = vocab
         self.merges = merges
-        self.special_tokens = special_tokens or []
-        
+        self.special_tokens = special_tokens if special_tokens else []
+        # test_overlapping_special_tokens 里面, "<|endoftext|><|endoftext|>" 不在原始的vocab里面, 需要手动新增
         self.rvocab = { v:k for k, v in vocab.items()}
+        
+        for sp in self.special_tokens:
+            spb = sp.encode('utf-8')
+            if spb not in self.rvocab:
+                new_token_id = len(self.vocab)
+                self.vocab[new_token_id] = spb
+                self.rvocab[spb] = new_token_id
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        special_tokens = special_tokens if special_tokens else []
         converter = GPT2Converter()
         with open(vocab_filepath, "r") as fp:
             reference_vocab = json.load(fp)
@@ -409,13 +417,38 @@ class BPETokenizer():
         return token_id
 
     def encode(self, text: str) -> list[int]:
-        # 预分词
-        subwords_bytes: list[bytes] = pre_tokenize(text)
-        
-        # 按照训练的顺序, 依次合并, 不是按照bytes出现的顺序
         tokens_id = []
-        for subword_byte in subwords_bytes:
-            tokens_id.extend(self._merge_subword_byte(subword_byte))
+        start_pos = 0
+        
+        if self.special_tokens:
+            # 按照长度降序排序，确保更长的符号（例如"<|eot|><|eot|>") 在更短的符号（例如"<|eot|>")之前被匹配
+            # 用来处理overlap情况下的贪心匹配, 先匹配最长的
+            sorted_tokens = sorted(self.special_tokens, key=len, reverse=True)
+            pattern = '|'.join([re.escape(sp) for sp in sorted_tokens])
+            print(list(re.split(pattern, text)))
+            matches = re.finditer(pattern, text)
+        else:
+            matches = []
+
+        for _match in matches:
+            # 分割文档
+            end_pos = _match.start()
+            if start_pos < end_pos:
+                doc = text[start_pos:end_pos]
+                # 预分词
+                subwords_bytes: list[bytes] = pre_tokenize(doc)
+                # 按照训练的顺序, 依次合并, 不是按照bytes出现的顺序
+                for subword_byte in subwords_bytes:
+                    tokens_id.extend(self._merge_subword_byte(subword_byte))
+
+            tokens_id.append(self.rvocab[_match.group().encode('utf-8')]) # 保留分隔符本身
+            start_pos = _match.end()
+
+        if start_pos < len(text):
+            doc = text[start_pos:]
+            subwords_bytes: list[bytes] = pre_tokenize(doc)
+            for subword_byte in subwords_bytes:
+                tokens_id.extend(self._merge_subword_byte(subword_byte))
 
         return tokens_id
 
@@ -443,11 +476,17 @@ if __name__ == "__main__":
     special_tokens = ["<|endoftext|>"]
 
     if args.tokenize:
-        tokenizer = BPETokenizer.from_files(args.vocab, args.merges, special_tokens)
-        tokens_id = tokenizer.encode("Hello, how are you?")
-        tokenized_string = [tokenizer.decode([x]) for x in tokens_id]
-        print(tokenized_string)
-        print(tokenizer.decode(tokens_id))
+        # tokenizer = BPETokenizer.from_files(args.vocab, args.merges, ["<|endoftext|>", "<|endoftext|><|endoftext|>"])
+        corpus_path = Path("/home/zwb/Jobs/cs336/tests/fixtures/address.txt")
+        with open(corpus_path, 'r') as fp:
+            text = fp.read()
+        tokenizer = BPETokenizer.from_files(args.vocab, args.merges)
+        tokens_id = tokenizer.encode(text)
+        # tokens_id = tokenizer.encode("Hello, how <|endoftext|><|endoftext|> are you?<|endoftext|>")
+        # tokens_id = tokenizer.encode("")
+        # tokenized_string = [tokenizer.decode([x]) for x in tokens_id]
+        # print(tokenized_string)
+        print(tokenizer.decode(tokens_id), end='')
     else:
         if args.eval:
             vocab, merges = evaluation(special_tokens)
