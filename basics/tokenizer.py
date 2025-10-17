@@ -400,13 +400,16 @@ class BPETokenizer():
 
     def _merge_subword_byte(self, subword_byte):
         token = [bytes([ei]) for ei in subword_byte]
-        for (b1, b2) in self.merges:
-            while b1 in token and token.index(b1) < len(token) - 1 and b2 == token[token.index(b1) + 1]:
-                # merge
-                i = token.index(b1)
-                token[i] = self.vocab[self.rvocab[token[i] + token[i+1]]]
-                del token[i+1]
-
+        for order, (b1, b2) in enumerate(self.merges):
+            if b1 in token and b2 in token:
+                i = -1
+                while b1 in token[i+1:]:
+                    i = token.index(b1, i+1)
+                    if i < len(token) - 1 and token[i] == b1 and token[i+1] == b2:
+                        # print(f"[{order+1}] Megre {token[i]} + {token[i+1]}" )
+                        token[i] = self.vocab[self.rvocab[token[i] + token[i+1]]]
+                        del token[i+1]
+                    
         token_id: list[int] = []
         for tok in token:
             token_id.append(self.rvocab[tok])
@@ -477,13 +480,17 @@ if __name__ == "__main__":
 
     if args.tokenize:
         # tokenizer = BPETokenizer.from_files(args.vocab, args.merges, ["<|endoftext|>", "<|endoftext|><|endoftext|>"])
-        corpus_path = Path("/home/zwb/Jobs/cs336/tests/fixtures/address.txt")
-        with open(corpus_path, 'r') as fp:
-            text = fp.read()
-        tokenizer = BPETokenizer.from_files(args.vocab, args.merges)
-        tokens_id = tokenizer.encode(text)
         # tokens_id = tokenizer.encode("Hello, how <|endoftext|><|endoftext|> are you?<|endoftext|>")
-        # tokens_id = tokenizer.encode("")
+        
+        # tokenizer = BPETokenizer.from_files(args.vocab, args.merges)
+        # corpus_path = Path("/home/zwb/Jobs/cs336/tests/fixtures/address.txt")
+        # with open(corpus_path, 'r') as fp:
+        #     text = fp.read()
+        # tokens_id = tokenizer.encode(text)
+        
+        tokenizer = BPETokenizer.from_files(args.vocab, args.merges)
+        tokens_id = tokenizer.encode(" seven years")
+        
         # tokenized_string = [tokenizer.decode([x]) for x in tokens_id]
         # print(tokenized_string)
         print(tokenizer.decode(tokens_id), end='')
