@@ -72,5 +72,8 @@
         - 进一步优化pretokenize的性能, 启动多个进程来做, vocab_size=500, 优化前 43.3 s, 用 4 个进程预处理没发现性能提升, 可能是数据量太小, 只测pre-tokenize, 用TinyStoriesV2-GPT4-train.txt, 测试平台换成linux, 内存占用过大, 会导致机器卡死, 参考别人的实现: [Code](https://www.heywhale.com/api/notebooks/689709e123583639fc675b6f/RenderedContent?cellcomment=1&cellbookmark=1#🚀-执行流程详解), 这里的实现我主要参考的是他用mmap做测试集分割和采样的优化, merge的思路还是扫一遍groups, 我没太弄明白他的merge思路, 按照他的思路, 为每个pair维护其索引, 每次只需要遍历这部分索引的左右对即可, 但是合并会导致索引发生改变, 导致之前其他pair的索引失效, 这里不知道他是怎么处理的, 我按照他的逻辑实现的, 通过不了测试. 此外, 他的sample的逻辑, 会修改原本的训练数据, strip() 会删除 \n, ' ' 等, 导致测试三过不了, 去掉strip() 就可以了, 优化完, test_train_bpe_special_tokens 的性能从 1 分钟多 降低到 1分钟之内.
         - 设置采样参数 22000 个文本, vocab_size=10000, 在linux上大概要训练 33 min 
         ![train](train_tinystories.png)
-        
-
+- tokenizer:
+    - 实现一个Tokenizer类，支持decode, encode的方法, 和讲义上的思路基本一致, decode很简单, encode会慢点, 要注意几点:
+        - overlap那个测试会混入一个 '<|endoftext|><|endoftext|>' 的special token, 在regex切分的时候需要先按长度将special_tokens排序, 让它可以最长匹配, 此外, 这个token在原本的vocab里面是不存在的, 需要预处理一下, 为不存在的special token新增一个token id的映射
+        - 如果要优化encode的逻辑, 需要考虑完备性, 我在尝试优化的时候, 遇到了很多问题, 最后选择naive的实现
+    - 使用我DIY训练出来的tokenizer, 在TinyStories 上可以达到和GPT2 tokenizer一致的压缩率, 但是在OWT上就比GPT2的低了

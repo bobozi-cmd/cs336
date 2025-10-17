@@ -489,12 +489,35 @@ if __name__ == "__main__":
         #     text = fp.read()
         # tokens_id = tokenizer.encode(text)
         
-        tokenizer = BPETokenizer.from_files(args.vocab, args.merges)
-        tokens_id = tokenizer.encode(" seven years")
+        # tokenizer = BPETokenizer.from_files(args.vocab, args.merges)
+        # tokens_id = tokenizer.encode(" seven years")
         
         # tokenized_string = [tokenizer.decode([x]) for x in tokens_id]
         # print(tokenized_string)
-        print(tokenizer.decode(tokens_id), end='')
+        # print(tokenizer.decode(tokens_id), end='')
+
+        print("Tokenizer 测试")
+        # test_path = Path("/home/zwb/Jobs/cs336/data/TinyStoriesV2-GPT4-valid.txt")
+        test_path = Path("/home/zwb/Jobs/cs336/data/owt_valid.txt")
+        n_sample = 10
+
+        trainer = BPETokenizerTrainer(test_path, 1000, special_tokens)
+        text = trainer._load_and_sample_data(n_sample, '<|endoftext|>')
+        pattern = "|".join([re.escape(token) for token in special_tokens])
+        documents: list[str] = [part for part in re.split(pattern, text) if part]
+        
+        def test_compress(tokenizer, name):
+            compress_ratio = []
+            for doc in documents:
+                tokens_id = tokenizer.encode(doc)
+                compress_ratio.append(len(doc.encode('utf-8')) / len(tokens_id))
+            print(f"[{name}] 压缩率为: {sum(compress_ratio) / len(compress_ratio)} bytes/token")
+
+        t1 = BPETokenizer.from_files(Path("/home/zwb/Jobs/cs336/basics/TinyStories_vocab.json"), Path("/home/zwb/Jobs/cs336/basics/TinyStories_merges.txt"))
+        t2 = BPETokenizer.from_files(Path("/home/zwb/Jobs/cs336/tests/fixtures/gpt2_vocab.json"), Path("/home/zwb/Jobs/cs336/tests/fixtures/gpt2_merges.txt"))
+        test_compress(t1, "DIY")
+        test_compress(t2, "GPT2")
+
     else:
         if args.eval:
             vocab, merges = evaluation(special_tokens)
@@ -509,10 +532,10 @@ if __name__ == "__main__":
         if args.save:
             save(vocab, merges, special_tokens)
 
-        import psutil
-        process = psutil.Process()
-        mem_usage = process.memory_info().rss / (1024 ** 3)  # GB
-        print(f"💾 峰值内存使用: {mem_usage:.2f} GB")
+    import psutil
+    process = psutil.Process()
+    mem_usage = process.memory_info().rss / (1024 ** 3)  # GB
+    print(f"💾 峰值内存使用: {mem_usage:.2f} GB")
 
 
 
