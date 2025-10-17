@@ -456,7 +456,8 @@ class BPETokenizer():
         return tokens_id
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterable[int]:
-        return []
+        for text in iterable:
+            yield from self.encode(text)
 
     def decode(self, ids: list[int]) -> str:
         bytes_list = list(map(self.vocab.get, ids))
