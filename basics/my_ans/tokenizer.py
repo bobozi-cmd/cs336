@@ -1,7 +1,7 @@
 import argparse
 from collections import defaultdict
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterable
 import regex as re
 import warnings
 import json
@@ -358,6 +358,70 @@ class BPETokenizerTrainer():
             token_group = self._merge_and_update(heap, token_group, pair.pair, new_index)
             
         return self.itos, self.merges
+
+class BPETokenizer():
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None) -> None:
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens or []
+        
+        self.rvocab = { v:k for k, v in vocab.items()}
+        self.prefix_merges: dict[bytes, list[bytes]] = defaultdict(list)
+        for b1, b2 in merges:
+            self.prefix_merges[b1].append(b2)
+        print(self.prefix_merges[b'H'])
+
+    @classmethod
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        converter = GPT2Converter()
+        with open(vocab_filepath, "r") as fp:
+            reference_vocab = json.load(fp)
+            vocab: dict[int, bytes] = {idx : converter.to_unicode(s) if s not in special_tokens else s.encode('utf-8') for s, idx in reference_vocab.items()}
+
+        merges: list[tuple[bytes, bytes]] = []
+        with open(merges_filepath, "r") as fp:
+            for line in fp.readlines():
+                (b1, b2) = line.strip().split(" ")
+                merges.append((converter.to_unicode(b1), converter.to_unicode(b2)))
+        
+        return cls(vocab, merges, special_tokens)                
+
+    def encode(self, text: str) -> list[int]:
+        # TODO: 加入special token的考虑
+
+        # 预分词
+        subwords_bytes: list[bytes] = pre_tokenize(text)
+        tokens_id = []
+        for subword_byte in subwords_bytes:
+            token = [bytes([ei]) for ei in subword_byte]
+            while True:
+                found = False
+                for i in range(len(token) - 1):
+                    if token[i] in self.prefix_merges and token[i+1] in self.prefix_merges[token[i]]:
+                        found = True
+                        token[i] = self.vocab[self.rvocab[token[i] + token[i+1]]]
+                        del token[i+1]
+                        break
+                if not found:
+                    break
+            
+            token_id: list[int] = []
+            for tok in token:
+                token_id.append(self.rvocab[tok])
+            
+            if debug_mode:
+                print([bytes([ei]) for ei in subword_byte], '->', token, '->', token_id)
+            tokens_id.extend(token_id)
+        
+        return tokens_id
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterable[int]:
+        return []
+
+    def decode(self, ids: list[int]) -> str:
+        bytes_list = list(map(self.vocab.get, ids))
+        string = b"".join(bytes_list).decode('utf-8', errors='replace')
+        return string
 
 if __name__ == "__main__":
 
