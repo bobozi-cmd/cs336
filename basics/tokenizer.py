@@ -4,7 +4,7 @@ import mmap
 from pathlib import Path
 import random
 import time
-from typing import BinaryIO
+from typing import BinaryIO, Iterable
 import regex as re
 import warnings
 import json
@@ -367,31 +367,105 @@ def evaluation(special_tokens):
     return train_vocab, train_merges
 
 
+class BPETokenizer():
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None) -> None:
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens or []
+        
+        self.rvocab = { v:k for k, v in vocab.items()}
+
+    @classmethod
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        converter = GPT2Converter()
+        with open(vocab_filepath, "r") as fp:
+            reference_vocab = json.load(fp)
+            vocab: dict[int, bytes] = {idx : converter.to_unicode(s) if s not in special_tokens else s.encode('utf-8') for s, idx in reference_vocab.items()}
+
+        merges: list[tuple[bytes, bytes]] = []
+        with open(merges_filepath, "r") as fp:
+            for line in fp.readlines():
+                (b1, b2) = line.strip().split(" ")
+                merges.append((converter.to_unicode(b1), converter.to_unicode(b2)))
+        
+        return cls(vocab, merges, special_tokens)                
+
+    def _merge_subword_byte(self, subword_byte):
+        token = [bytes([ei]) for ei in subword_byte]
+        for (b1, b2) in self.merges:
+            while b1 in token and token.index(b1) < len(token) - 1 and b2 == token[token.index(b1) + 1]:
+                # merge
+                i = token.index(b1)
+                token[i] = self.vocab[self.rvocab[token[i] + token[i+1]]]
+                del token[i+1]
+
+        token_id: list[int] = []
+        for tok in token:
+            token_id.append(self.rvocab[tok])
+        
+        if debug_mode:
+            print([bytes([ei]) for ei in subword_byte], '->', token, '->', token_id)
+
+        return token_id
+
+    def encode(self, text: str) -> list[int]:
+        # 预分词
+        subwords_bytes: list[bytes] = pre_tokenize(text)
+        
+        # 按照训练的顺序, 依次合并, 不是按照bytes出现的顺序
+        tokens_id = []
+        for subword_byte in subwords_bytes:
+            tokens_id.extend(self._merge_subword_byte(subword_byte))
+
+        return tokens_id
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterable[int]:
+        return []
+
+    def decode(self, ids: list[int]) -> str:
+        bytes_list = list(map(self.vocab.get, ids))
+        string = b"".join(bytes_list).decode('utf-8', errors='replace')
+        return string
+
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-f", "--file", type=Path, required=True)
+    parser.add_argument("-f", "--file", type=Path)
     parser.add_argument("--save", default=False, action="store_true")
     parser.add_argument("--eval", default=False, action="store_true")
+    parser.add_argument("--tokenize", default=False, action="store_true")
+    parser.add_argument("-m", "--merges", type=Path)
+    parser.add_argument("-v", "--vocab", type=Path)
     args = parser.parse_args()
 
     special_tokens = ["<|endoftext|>"]
 
-    if args.eval:
-        vocab, merges = evaluation(special_tokens)
+    if args.tokenize:
+        tokenizer = BPETokenizer.from_files(args.vocab, args.merges, special_tokens)
+        tokens_id = tokenizer.encode("Hello, how are you?")
+        tokenized_string = [tokenizer.decode([x]) for x in tokens_id]
+        print(tokenized_string)
+        print(tokenizer.decode(tokens_id))
     else:
-        vocab_size = 500
-        n_proc = 8
-        sample_size = 22000
+        if args.eval:
+            vocab, merges = evaluation(special_tokens)
+        else:
+            vocab_size = 500
+            n_proc = 8
+            sample_size = 22000
 
-        tokenizer = BPETokenizerTrainer(args.file, vocab_size, special_tokens)
-        vocab, merges = tokenizer.train(n_proc, sample_size)
+            tokenizer = BPETokenizerTrainer(args.file, vocab_size, special_tokens)
+            vocab, merges = tokenizer.train(n_proc, sample_size)
 
-    if args.save:
-        save(vocab, merges, special_tokens)
+        if args.save:
+            save(vocab, merges, special_tokens)
 
-    import psutil
-    process = psutil.Process()
-    mem_usage = process.memory_info().rss / (1024 ** 3)  # GB
-    print(f"💾 峰值内存使用: {mem_usage:.2f} GB")
+        import psutil
+        process = psutil.Process()
+        mem_usage = process.memory_info().rss / (1024 ** 3)  # GB
+        print(f"💾 峰值内存使用: {mem_usage:.2f} GB")
+
+
 
